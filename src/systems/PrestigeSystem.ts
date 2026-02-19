@@ -9,17 +9,28 @@ import { createBuilding } from "../entities/createBuilding";
 import { BUILDINGS } from "../config/buildings";
 import { createNaturalResource } from "../entities/createNaturalResource";
 import { NATURAL } from "../config/constants";
+import { RESOURCES } from "../config/resources";
+import { batchDestroyVisuals, finishBatchDestroy } from "../render/RenderSystem";
 
 export class PrestigeSystem {
   // 1 Amber per 5000 Credits Earned (Lifetime)
   // Using simple linear or sqrt formula?
   // Let's use SQRT to encourage deeper runs, but keep it accessible.
-  // Amber = floor( sqrt( LifetimeCredits / 1000 ) )
+  // Amber = floor( sqrt( LifetimeCredits / (1000 + LifetimeAmber * 10) ) )
   static calculatePendingPrestige(): Decimal {
-    const base = new Decimal(1000);
-    if (gameState.lifetimeEarnings.lt(base)) return new Decimal(0);
+    // Safety check for legacy saves/hot-reload
+    if (!gameState.lifetimeAmber) {
+      gameState.lifetimeAmber = gameState.prestigeCurrency || new Decimal(0);
+    }
 
-    return gameState.lifetimeEarnings.div(base).sqrt().floor();
+    // Dynamic Divisor: The more Amber you have ever earned, the harder the next one is.
+    // This helps curb the "farm 1 amber quickly" loop.
+    // Updated to * 100 to significantly slow down rapid farming.
+    const divisor = new Decimal(1000).plus(gameState.lifetimeAmber.mul(100));
+
+    if (gameState.lifetimeEarnings.lt(divisor)) return new Decimal(0);
+
+    return gameState.lifetimeEarnings.div(divisor).sqrt().floor();
   }
 
   static buyUpgrade(id: string) {
@@ -84,6 +95,7 @@ export class PrestigeSystem {
     }
 
     gameState.prestigeCurrency = gameState.prestigeCurrency.plus(gain);
+    gameState.lifetimeAmber = gameState.lifetimeAmber.plus(gain);
     console.log(`Prestige Reset! Gained ${gain} Amber.`);
 
     // 2. Clear Run State
@@ -100,7 +112,7 @@ export class PrestigeSystem {
     const keepRatio = Math.min(0.5, vaultLevel * 0.1);
 
     const nextResources: Record<string, Map<string, Decimal>> = {
-      [ZONES.CITY]: new Map(),
+      [ZONES.CITY]: new Map([[RESOURCES.BREAD, new Decimal(1000)]]),
       [ZONES.FOREST]: new Map(),
       [ZONES.MOUNTAIN]: new Map(),
       [ZONES.FARM]: new Map(),
@@ -109,7 +121,8 @@ export class PrestigeSystem {
     if (keepRatio > 0) {
       for (const z of Object.keys(gameState.resources)) {
         gameState.resources[z].forEach((amt, type) => {
-          nextResources[z].set(type, amt.mul(keepRatio).floor());
+          const current = nextResources[z].get(type) || new Decimal(0);
+          nextResources[z].set(type, current.plus(amt.mul(keepRatio).floor()));
         });
       }
     }
@@ -143,14 +156,21 @@ export class PrestigeSystem {
     gameState.employed = 0;
     gameState.activeZone = ZONES.CITY;
     gameState.resources = nextResources; // Apply vaulted resources
+    gameState.routes = []; // Clear logistics routes
+    gameState.autoSellRoutes = []; // Clear auto-sell routes
 
     // Reset Buildings / Entities
-    // Create a copy because we are removing from the world during iteration
-    for (const ent of [...world.entities]) {
-      // Destroy sprites
-      if (ent.sprite) ent.sprite.destroy({ children: true });
+    // Fast Batch visual destroy
+    batchDestroyVisuals();
+
+    // Now remove from World (logic only)
+    // Using a simple loop is fine now since subscribers are skipped
+    const entities = [...world.entities];
+    for (const ent of entities) {
       world.remove(ent);
     }
+    finishBatchDestroy();
+
     GridLookup.clear();
 
     // Clear PIXI Stage of everything except maybe UI if separate?
@@ -187,8 +207,8 @@ export class PrestigeSystem {
     };
 
     const size = gameState.worldWidth;
-    const natureBonus =
-      (gameState.prestigeUpgrades["nature_abundance"] || 0) * 2;
+    const natureBonus = (gameState.prestigeUpgrades["nature_abundance"] || 0);
+    const initialCap = 5 + natureBonus;
 
     // City
     for (let x = 0; x < size; x++) {
@@ -216,7 +236,7 @@ export class PrestigeSystem {
       const j = Math.floor(Math.random() * (i + 1));
       [forestFree[i], forestFree[j]] = [forestFree[j], forestFree[i]];
     }
-    for (let i = 0; i < 15 + natureBonus; i++) {
+    for (let i = 0; i < initialCap; i++) {
       if (forestFree[i])
         addNaturalSafely(
           ZONES.FOREST,
@@ -239,7 +259,7 @@ export class PrestigeSystem {
       const j = Math.floor(Math.random() * (i + 1));
       [mountainFree[i], mountainFree[j]] = [mountainFree[j], mountainFree[i]];
     }
-    for (let i = 0; i < 12 + natureBonus; i++) {
+    for (let i = 0; i < initialCap; i++) {
       if (mountainFree[i])
         addNaturalSafely(
           ZONES.MOUNTAIN,
@@ -253,11 +273,24 @@ export class PrestigeSystem {
     for (let x = 0; x < size; x++) {
       for (let y = 0; y < size; y++) {
         createTile(ZONES.FARM, x, y);
-        if (x === Math.floor(size / 2)) {
-          // River roughly in middle
-          addNaturalSafely(ZONES.FARM, x, y, NATURAL.RIVER);
-        }
       }
+    }
+    
+    // Farm Nature Spawn (Scatter)
+    const farmFree: { x: number; y: number }[] = [];
+    for (let x = 0; x < size; x++)
+        for (let y = 0; y < size; y++) farmFree.push({ x, y });
+
+    for (let i = farmFree.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [farmFree[i], farmFree[j]] = [farmFree[j], farmFree[i]];
+    }
+    
+    // Spawn Small quantity of Water (River)
+    for (let i = 0; i < initialCap; i++) {
+        if (farmFree[i]) {
+            addNaturalSafely(ZONES.FARM, farmFree[i].x, farmFree[i].y, NATURAL.RIVER);
+        }
     }
 
     // Starter Buildings

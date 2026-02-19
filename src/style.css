@@ -11,6 +11,9 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Custom Cursor */
+  cursor: url("/sprites/cursor_default.png"), auto;
 }
 
 a {

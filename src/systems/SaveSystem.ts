@@ -29,6 +29,7 @@ interface SaveData {
     prestigeCurrency: string;
     prestigeUpgrades: Record<string, number>;
     lifetimeEarnings: string;
+    lifetimeAmber?: string; // Optional for backward compatibility
     resources: Record<string, Record<string, string>>;
     population: { current: number; max: number; employed: number };
     activeZone: string;
@@ -87,6 +88,7 @@ export const SaveSystem = {
           prestigeCurrency: gameState.prestigeCurrency.toString(),
           prestigeUpgrades: gameState.prestigeUpgrades,
           lifetimeEarnings: gameState.lifetimeEarnings.toString(),
+          lifetimeAmber: gameState.lifetimeAmber.toString(),
 
           resources: resObj,
           population: {
@@ -170,6 +172,9 @@ export const SaveSystem = {
       gameState.prestigeUpgrades = data.gameState.prestigeUpgrades || {};
       gameState.lifetimeEarnings = new Decimal(
         data.gameState.lifetimeEarnings || 0,
+      );
+      gameState.lifetimeAmber = new Decimal(
+        data.gameState.lifetimeAmber || data.gameState.prestigeCurrency || 0,
       );
 
       // Restore Resources

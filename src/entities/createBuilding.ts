@@ -1,14 +1,32 @@
 import { world, type Entity } from "../core/ecs";
-import { TILE_SIZE, type ZoneId } from "../config/constants";
+import { TILE_SIZE, type ZoneId, NATURAL } from "../config/constants";
 import { BUILDING_INFO, BUILDINGS, type BuildingId } from "../config/buildings";
-import { Graphics, Container, Sprite, Texture } from "pixi.js";
+import { Graphics, Container, Sprite, Texture, Text } from "pixi.js";
 import Decimal from "decimal.js";
 
 export const SPRITE_MAP: Record<string, string> = {
+  // Buildings
   [BUILDINGS.TENEMENT]: "/sprites/bldg_tenement.png",
   [BUILDINGS.MARKETPLACE]: "/sprites/bldg_market.png",
   [BUILDINGS.TOWN_HALL]: "/sprites/bldg_city_hall.png",
   [BUILDINGS.RESEARCH_LAB]: "/sprites/bldg_research.png",
+
+  // Natural Resources
+  [NATURAL.RIVER]: "/sprites/prop_water.png",
+  [NATURAL.ROCK]: "/sprites/prop_stone.png",
+
+  // Tiles
+  tile_forest: "/sprites/tile_forest_ground.png",
+
+  // Tools
+  tool_move: "/sprites/icon_tool_move.png",
+  tool_destroy: "/sprites/icon_tool_bomb.png",
+
+  // Cursors
+  cursor_default: "/sprites/cursor_default.png",
+  cursor_pointer: "/sprites/cursor_pointer.png",
+  cursor_grab: "/sprites/cursor_grab.png",
+  cursor_grabbing: "/sprites/cursor_grabbing.png",
 };
 
 export function createBuilding(
@@ -25,9 +43,6 @@ export function createBuilding(
 
   if (SPRITE_MAP[buildingId]) {
     const texture = Texture.from(SPRITE_MAP[buildingId]);
-    // Set nearest neighbor for pixel art look if needed (usually handled by BaseTexture scaleMode)
-    // texture.baseTexture.scaleMode = SCALE_MODES.NEAREST; // Deprecated in v8? App usually sets it.
-
     const s = new Sprite(texture);
     s.anchor.set(0.5);
     s.width = TILE_SIZE;
@@ -44,6 +59,23 @@ export function createBuilding(
     g.y = TILE_SIZE / 2;
     container.addChild(g);
   }
+
+  // Add Level Text (Always create, hide if Level 1 initially?)
+  const lvlTxt = new Text({
+    text: "1", // Initial level
+    style: {
+      fontSize: 10,
+      fill: "white",
+      fontWeight: "bold",
+      stroke: { color: "#000000", width: 2 }, // Strong outline
+    },
+  });
+  lvlTxt.label = "LevelLabel"; // Tag for easier update
+  lvlTxt.anchor.set(0.5);
+  lvlTxt.x = TILE_SIZE - 8; // Bottom right corner
+  lvlTxt.y = TILE_SIZE - 8;
+  lvlTxt.visible = false; // Hide 1
+  container.addChild(lvlTxt);
 
   // Position (Top-Left of Tile for logic consistency with RenderSystem)
   const pixelX = x * TILE_SIZE;
@@ -76,7 +108,7 @@ export function createBuilding(
   return entity;
 }
 
-function drawBuildingShape(g: Graphics, id: string) {
+export function drawBuildingShape(g: Graphics, id: string) {
   switch (id) {
     case BUILDINGS.LOGGING_CAMP:
       // Brown Log Cabin

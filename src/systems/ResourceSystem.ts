@@ -30,10 +30,10 @@ function getAdjacencyMultiplier(
     buildingType === BUILDINGS.LOGGING_CAMP
       ? NATURAL.TREE
       : buildingType === BUILDINGS.QUARRY ||
-          buildingType === BUILDINGS.STONE_MASON
+        buildingType === BUILDINGS.STONE_MASON
         ? NATURAL.ROCK
         : buildingType === BUILDINGS.FARM_FIELD ||
-            buildingType === BUILDINGS.FOREST_DOCK
+          buildingType === BUILDINGS.FOREST_DOCK
           ? NATURAL.RIVER
           : null;
 
@@ -73,6 +73,11 @@ function calculateMaxPopulation() {
     const info = BUILDING_INFO[ent.building.type];
     if (info && info.housing) {
       let housing = info.housing;
+      
+      // Urban Planning Bonus
+      const urbanLevel = gameState.techLevels["urban_planning"] || 0;
+      if (urbanLevel > 0) housing += (urbanLevel * 2);
+
       // Scale by Level? Usually housing scales with level.
       // If Town Hall level 1 = 5, Level 2 = 10?
       if (ent.building.level > 1) {
@@ -84,9 +89,23 @@ function calculateMaxPopulation() {
   return pop;
 }
 
+function calculateEmployed() {
+  let emp = 0;
+  const buildings = world.with("building");
+  for (const ent of buildings) {
+    const info = BUILDING_INFO[ent.building.type];
+    if (info && info.workers) {
+      // Linear scaling: Workers = Base * Level
+      emp += info.workers * ent.building.level;
+    }
+  }
+  return emp;
+}
+
 function ResourceSystem(dt: number) {
-  // Recalculate Max Pop
+  // Recalculate Max Pop & Employment
   gameState.maxPopulation = calculateMaxPopulation();
+  gameState.employed = calculateEmployed();
 
   // Reset production rates for this frame calculation
   gameState.productionRates = {};
@@ -109,6 +128,21 @@ function ResourceSystem(dt: number) {
     const levels = gameState.techLevels["industrial_efficiency"] || 0;
     if (levels > 0) {
       multiplier = multiplier.mul(1 + levels * 0.1);
+    }
+
+    // Tech Multiplier (Research Speed)
+    if (entity.building?.type === BUILDINGS.RESEARCH_LAB) {
+        const resLevels = gameState.techLevels["research_speed"] || 0;
+        if (resLevels > 0) {
+            multiplier = multiplier.mul(1 + resLevels * 0.2);
+        }
+    }
+
+    // Tech Multiplier (Reinforced Tools)
+    if (entity.building?.type === BUILDINGS.LOGGING_CAMP || entity.building?.type === BUILDINGS.QUARRY) {
+        if (gameState.unlockedTechs.has("reinforced_tools")) {
+            multiplier = multiplier.mul(1.5);
+        }
     }
 
     // Prestige Multiplier (Golden Age)
@@ -200,7 +234,7 @@ function ResourceSystem(dt: number) {
   }
 
   // 3. Population Consumption & Growth
-  const FOOD_CONSUMPTION = 0.05; // bread per person per second
+  const FOOD_CONSUMPTION = 0.1; // bread per person per second
   const consumption = new Decimal(
     gameState.totalPopulation * FOOD_CONSUMPTION * dt,
   );
@@ -258,7 +292,11 @@ function ResourceSystem(dt: number) {
     let capacity = new Decimal(marketCount * 5 * dt); // Sell 5 items per market per sec
 
     const cityRes = gameState.resources[ZONES.CITY];
-    const resourceLimit = 200;
+    
+    // Base 200 + 100 per Warehousing Level
+    let resourceLimit = 200;
+    const wareLevels = gameState.techLevels["warehousing"] || 0;
+    if (wareLevels > 0) resourceLimit += wareLevels * 100;
 
     for (const [res, amount] of cityRes) {
       if (res === RESOURCES.TECH_POINTS || res === RESOURCES.BREAD) continue; // Don't sell Food or Science
@@ -279,8 +317,12 @@ function ResourceSystem(dt: number) {
     }
   }
 
-  // 5. Nature Respawn Logic
-  checkNatureRespawn(dt);
+  // 5. Nature Respawn Logic (Dynamic Balance)
+  try {
+    checkNatureRespawn(dt);
+  } catch (e) {
+    console.error("Nature Respawn Error:", e);
+  }
 }
 
 let natureTimer = 0;
@@ -289,120 +331,63 @@ function checkNatureRespawn(dt: number) {
   if (natureTimer < 10) return; // Check every 10 seconds
   natureTimer = 0;
 
-  const zonesToCheck = [ZONES.FOREST, ZONES.MOUNTAIN, ZONES.FARM];
-  const natureBonus = (gameState.prestigeUpgrades["nature_abundance"] || 0) * 2;
-  const baseCap = 5;
-  const cap = baseCap + natureBonus;
+  // Configuration
+  const availableZones = [ZONES.FOREST, ZONES.MOUNTAIN, ZONES.FARM];
+  const natureBonus = (gameState.prestigeUpgrades["nature_abundance"] || 0);
+  const maxPerZone = 5 + natureBonus;
+  
+  const W = gameState.worldWidth;
+  const H = gameState.worldHeight;
 
-  zonesToCheck.forEach((zone) => {
-    // Count Existing
-    let count = 0;
-    const naturals = world.with("natural", "zoneId");
-    for (const n of naturals) {
-      if (n.zoneId === zone) count++;
-    }
+  // 1. Pick ONE random zone to act upon
+  const targetZone = availableZones[Math.floor(Math.random() * availableZones.length)];
 
-    const W = gameState.worldWidth;
-    const H = gameState.worldHeight;
+  // 2. Count entities in that zone
+  // Use world.entities directly
+  const naturalsInZone = world.entities.filter(
+      (e) => e.zoneId === targetZone && !!e.natural
+  );
+  const count = naturalsInZone.length;
 
-    // FARM: Linear River Logic
-    if (zone === ZONES.FARM) {
-      // Only spawn if no river exists
-      if (count > 0) return;
-
-      // Build Occupancy Map
-      const occupiedMap = new Set<string>();
-      const zoneEntities = world.with("gridPosition", "zoneId");
-      for (const e of zoneEntities) {
-        if (e.zoneId === zone && (e.building || e.natural)) {
-          occupiedMap.add(`${e.gridPosition.x},${e.gridPosition.y}`);
-        }
+  // 3. Logic: Add or Remove (Single Action)
+  
+  if (count >= maxPerZone) {
+      if (count > 0) {
+          // Remove ONE random resource
+          const idx = Math.floor(Math.random() * count);
+          const toRemove = naturalsInZone[idx];
+          world.remove(toRemove);
+          console.log(`Nature Balance: Removed excess ${toRemove.natural} from ${targetZone} (Count: ${count-1}/${maxPerZone})`);
       }
+  } else {
+      // Add ONE resource
+      // Determine type
+      let type: string = NATURAL.TREE;
+      if (targetZone === ZONES.MOUNTAIN) type = NATURAL.ROCK;
+      if (targetZone === ZONES.FARM) type = NATURAL.RIVER;
 
-      const minLen = Math.max(1, Math.ceil(W / 3));
-      let maxLen = Math.floor(W / 2);
-      if (maxLen < minLen) maxLen = minLen; // Safety
+      // Try random spots to find free space
+      const allInZone = world.entities.filter(
+          e => e.zoneId === targetZone && !!e.gridPosition
+      );
 
-      // Try lengths descending
-      for (let len = maxLen; len >= 1; len--) {
-        const candidates: { x: number; y: number; dx: number; dy: number }[] =
-          [];
+      let spawned = false;
+      for (let i = 0; i < 20; i++) { 
+          const rx = Math.floor(Math.random() * W);
+          const ry = Math.floor(Math.random() * H);
 
-        // Horizontal Scan
-        for (let y = 0; y < H; y++) {
-          for (let x = 0; x <= W - len; x++) {
-            let valid = true;
-            for (let k = 0; k < len; k++) {
-              if (occupiedMap.has(`${x + k},${y}`)) {
-                valid = false;
-                break;
-              }
-            }
-            if (valid) candidates.push({ x, y, dx: 1, dy: 0 });
+          const occupied = allInZone.some(
+              e => e.gridPosition!.x === rx && 
+                   e.gridPosition!.y === ry &&
+                   (!!e.natural || !!e.building) // Only block as occupied if it has nature/building. Tiles in gridPosition are fine (ground).
+          );
+
+          if (!occupied) {
+              createNaturalResource(targetZone, rx, ry, type);
+              console.log(`Nature Balance: Spawned ${type} in ${targetZone} at ${rx},${ry} (Count: ${count+1}/${maxPerZone})`);
+              spawned = true;
+              break; 
           }
-        }
-
-        // Vertical Scan
-        for (let x = 0; x < W; x++) {
-          for (let y = 0; y <= H - len; y++) {
-            let valid = true;
-            for (let k = 0; k < len; k++) {
-              if (occupiedMap.has(`${x},${y + k}`)) {
-                valid = false;
-                break;
-              }
-            }
-            if (valid) candidates.push({ x, y, dx: 0, dy: 1 });
-          }
-        }
-
-        if (candidates.length > 0) {
-          const choice =
-            candidates[Math.floor(Math.random() * candidates.length)];
-          for (let k = 0; k < len; k++) {
-            createNaturalResource(
-              zone,
-              choice.x + k * choice.dx,
-              choice.y + k * choice.dy,
-              NATURAL.RIVER,
-            );
-          }
-          console.log(`Spawned River len ${len} in FARM`);
-          return; // Spawning complete
-        }
       }
-      return; // No space
-    }
-
-    // OTHER ZONES: Random Scatter
-    if (count < cap) {
-      // Try 5 random spots
-      for (let i = 0; i < 5; i++) {
-        const rx = Math.floor(Math.random() * W);
-        const ry = Math.floor(Math.random() * W);
-
-        // Check if occupied by Building or Natural
-        // We can query specific coords
-        const occupied = world
-          .with("gridPosition", "zoneId")
-          .where(
-            (e) =>
-              e.zoneId === zone &&
-              e.gridPosition.x === rx &&
-              e.gridPosition.y === ry &&
-              (!!e.building || !!e.natural),
-          ).first;
-
-        if (!occupied) {
-          // Determine type
-          let type: string = NATURAL.TREE;
-          if (zone === ZONES.MOUNTAIN) type = NATURAL.ROCK;
-
-          createNaturalResource(zone, rx, ry, type);
-          console.log(`Respawned ${type} in ${zone} at ${rx},${ry}`);
-          break; // Spawned 1, move to next zone
-        }
-      }
-    }
-  });
+  }
 }

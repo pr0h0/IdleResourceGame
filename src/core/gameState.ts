@@ -37,6 +37,7 @@ class GameState {
 
   // Prestige
   public prestigeCurrency: Decimal = new Decimal(0); // "Amber"
+  public lifetimeAmber: Decimal = new Decimal(0); // Total Amber ever gained
   public lifetimeEarnings: Decimal = new Decimal(0); // For calculating prestige gain
   public prestigeUpgrades: Record<string, number> = {}; // { "upgrade_id": level }
 
@@ -78,7 +79,15 @@ class GameState {
     throughput?: number; // Actual moved per sec
   }> = [];
 
-  constructor() {}
+  public autoSellRoutes: Array<{
+    id: number;
+    zone: ZoneId;
+    resource: string;
+    keepAmount: number; // Sell everything above this
+    active: boolean;
+  }> = [];
+
+  constructor() { }
 
   public switchZone(zone: ZoneId) {
     this.activeZone = zone;

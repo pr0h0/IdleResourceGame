@@ -65,7 +65,6 @@ export const BUILDING_INFO: Record<string, BuildingDef> = {
     name: "Truck Depot",
     description:
       "Hub for logistics. Upgrade to increase Fleet Size (+2 Trucks) and Speed (+20%).",
-    unlockReq: "logistics",
     cost: { money: 100 },
     upgradeCost: {
       [RESOURCES.WOOD]: 100,

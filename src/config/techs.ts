@@ -4,6 +4,7 @@ export interface TechDef {
   description: string;
   cost: number; // Tech Points
   req?: string; // Prerequisite Tech ID
+  repeatable?: boolean;
 }
 
 export const TECHS: Record<string, TechDef> = {
@@ -51,10 +52,55 @@ export const TECHS: Record<string, TechDef> = {
     cost: 300,
     req: "logistics",
   },
+  auto_trade: {
+    id: "auto_trade",
+    name: "Auto-Trade",
+    description:
+      "Automatically sell excess resources. Configurable in Logistics.",
+    cost: 250,
+    req: "economics",
+  },
+  "research_speed": {
+    id: "research_speed",
+    name: "Research Speed",
+    description: "Research Labs work 20% faster. (Repeatable).",
+    cost: 300,
+    repeatable: true,
+  },
+  auto_upgrade: {
+    id: "auto_upgrade",
+    name: "Auto-Upgrade",
+    description: "Automatically upgrade buildings to target level.",
+    cost: 500,
+    req: "logistics",
+  },
   industrial_efficiency: {
     id: "industrial_efficiency",
     name: "Industrial Efficiency",
     description: "+10% Global Production (Repeatable).",
+    repeatable: true,
     cost: 200,
+  },
+  reinforced_tools: {
+    id: "reinforced_tools",
+    name: "Reinforced Tools",
+    description: "Logging Camps and Quarries produce 50% more.",
+    cost: 150,
+    req: "masonry",
+  },
+  warehousing: {
+    id: "warehousing",
+    name: "Warehousing",
+    description: "Increases Marketplace Auto-Sell limit by 100 per level. (Repeatable).",
+    cost: 400,
+    repeatable: true,
+  },
+  urban_planning: {
+    id: "urban_planning",
+    name: "Urban Planning",
+    description: "Houses provide +2 Max Population per level. (Repeatable).",
+    cost: 600,
+    req: "economics",
+    repeatable: true,
   },
 };

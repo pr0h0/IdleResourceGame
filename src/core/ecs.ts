@@ -22,11 +22,11 @@ export type Entity = {
     targetRoute?: string;
     inventory: Map<string, Decimal>;
     state:
-      | "idle"
-      | "moving_to_source"
-      | "loading"
-      | "moving_to_sink"
-      | "unloading";
+    | "idle"
+    | "moving_to_source"
+    | "loading"
+    | "moving_to_sink"
+    | "unloading";
     targetEntity?: Entity;
     targetX: number;
     targetY: number;
@@ -49,6 +49,7 @@ export type Entity = {
   building?: {
     type: string;
     level: number;
+    autoUpgradeTarget?: number;
   };
 
   // --- Environment ---

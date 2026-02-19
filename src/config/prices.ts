@@ -14,3 +14,7 @@ export const RESOURCE_PRICES: Record<string, number> = {
 
   [RESOURCES.SUPPLY_CRATE]: 50,
 };
+
+export function getSellPrice(resource: string, _gameState?: any): number {
+  return RESOURCE_PRICES[resource] || 1;
+}

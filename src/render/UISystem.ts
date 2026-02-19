@@ -55,7 +55,8 @@ function createTechUI() {
     left: "50%",
     transform: "translate(-50%, -50%)",
     width: "600px",
-    height: "400px",
+    height: "auto",
+    maxHeight: "80vh",
     backgroundColor: "#111",
     border: "2px solid #555",
     display: "none",
@@ -143,7 +144,7 @@ export function refreshTechUI() {
     if (!row || !action || !info) return;
 
     // Repeatable logic
-    const isRepeatable = tech.id === "industrial_efficiency";
+    const isRepeatable = !!tech.repeatable;
     const level = gameState.techLevels[tech.id] || 0;
     let cost = new Decimal(tech.cost);
 
@@ -158,52 +159,73 @@ export function refreshTechUI() {
 
     if (isRepeatable) {
       // Repeatable always "can unlock" (if enough points)
-      const btn = document.createElement("button");
-      btn.textContent = `Upgrade (${cost.floor()} TP)`;
-      btn.disabled = points.lt(cost);
-      btn.onclick = () => {
-        if (points.gte(cost)) {
-          gameState.resources[ZONES.CITY].set(
-            RESOURCES.TECH_POINTS,
-            points.sub(cost),
-          );
-          if (!gameState.techLevels[tech.id]) gameState.techLevels[tech.id] = 0;
-          gameState.techLevels[tech.id]++;
-          // Repeatable doesn't mark "unlockedTechs" to prevent hiding? Or adds to set?
-          // Let's add to set so building reqs work if needed
-          gameState.unlockedTechs.add(tech.id);
-          refreshTechUI();
-        }
-      };
-      action.innerHTML = "";
-      action.appendChild(btn);
-      row.style.backgroundColor = points.gte(cost) ? "#333" : "#222";
-    } else if (isUnlocked) {
-      row.style.backgroundColor = "#224422";
-      action.textContent = "Researched";
-      action.style.color = "#8f8";
-    } else {
-      if (canUnlock) {
-        row.style.backgroundColor = "#333";
-        const btn = document.createElement("button");
-        btn.textContent = `Unlock (${tech.cost} TP)`;
-        btn.disabled = points.lt(tech.cost);
+      let btn = action.querySelector("button") as HTMLButtonElement;
+      if (!btn) {
+        btn = document.createElement("button");
+        // Only bind click once or re-bind safely
         btn.onclick = () => {
-          if (points.gte(tech.cost)) {
+          // Re-fetch points to be safe in closure
+          const currentPoints = gameState.resources[ZONES.CITY].get(RESOURCES.TECH_POINTS) || new Decimal(0);
+          // Recalculate cost in closure
+          const currentLvl = gameState.techLevels[tech.id] || 0;
+          const currentCost = new Decimal(tech.cost).mul(Math.pow(1.5, currentLvl));
+
+          if (currentPoints.gte(currentCost)) {
             gameState.resources[ZONES.CITY].set(
               RESOURCES.TECH_POINTS,
-              points.sub(tech.cost),
+              currentPoints.sub(currentCost),
             );
+            if (!gameState.techLevels[tech.id]) gameState.techLevels[tech.id] = 0;
+            gameState.techLevels[tech.id]++;
             gameState.unlockedTechs.add(tech.id);
             refreshTechUI();
           }
         };
         action.innerHTML = "";
         action.appendChild(btn);
+      }
+
+      // Update Button State
+      btn.textContent = `Upgrade (${cost.floor()} TP)`;
+      btn.disabled = points.lt(cost);
+
+      row.style.backgroundColor = points.gte(cost) ? "#333" : "#222";
+    } else if (isUnlocked) {
+      if (row.dataset.state !== 'unlocked') {
+        row.style.backgroundColor = "#224422";
+        action.innerHTML = '<span style="color:#8f8">Researched</span>';
+        row.dataset.state = 'unlocked';
+      }
+    } else {
+      if (canUnlock) {
+        let btn = action.querySelector("button") as HTMLButtonElement;
+        if (!btn || row.dataset.state !== 'canUnlock') {
+          btn = document.createElement("button");
+          btn.onclick = () => {
+            const currentPoints = gameState.resources[ZONES.CITY].get(RESOURCES.TECH_POINTS) || new Decimal(0);
+            if (currentPoints.gte(tech.cost)) {
+              gameState.resources[ZONES.CITY].set(
+                RESOURCES.TECH_POINTS,
+                currentPoints.sub(tech.cost),
+              );
+              gameState.unlockedTechs.add(tech.id);
+              refreshTechUI();
+            }
+          };
+          action.innerHTML = "";
+          action.appendChild(btn);
+          row.dataset.state = 'canUnlock';
+        }
+
+        btn.textContent = `Unlock (${tech.cost} TP)`;
+        btn.disabled = points.lt(tech.cost);
+        row.style.backgroundColor = "#333";
       } else {
-        row.style.backgroundColor = "#111";
-        action.textContent = `Requires: ${TECHS[tech.req!]?.name || tech.req}`;
-        action.style.color = "#888";
+        if (row.dataset.state !== 'locked') {
+          row.style.backgroundColor = "#111";
+          action.innerHTML = `<span style="color:#888">Requires: ${TECHS[tech.req!]?.name || tech.req}</span>`;
+          row.dataset.state = 'locked';
+        }
       }
     }
   });
@@ -320,15 +342,20 @@ function createResourcesUI() {
   resContainer.id = "resource-ui";
   Object.assign(resContainer.style, {
     position: "absolute",
-    top: "10px",
-    right: "10px",
-    color: "white",
-    backgroundColor: "rgba(0,0,0,0.8)",
-    padding: "10px",
-    fontFamily: "monospace",
+    top: "15px",
+    right: "15px",
+    color: "#e0e0e0",
+    backgroundColor: "rgba(30, 30, 30, 0.95)",
+    backdropFilter: "blur(5px)", // Glass effect
+    border: "1px solid #444",
+    boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
+    padding: "15px",
+    fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     zIndex: "100",
-    borderRadius: "8px",
-    minWidth: "200px",
+    borderRadius: "12px",
+    minWidth: "240px",
+    fontSize: "14px",
+    transition: "all 0.2s ease",
   });
   document.body.appendChild(resContainer);
 
@@ -336,6 +363,9 @@ function createResourcesUI() {
   header.id = "res-header";
   header.style.display = "flex";
   header.style.flexDirection = "column";
+  header.style.marginBottom = "12px";
+  header.style.borderBottom = "1px solid #555";
+  header.style.paddingBottom = "8px";
   resContainer.appendChild(header);
 
   // Stats Container
@@ -346,14 +376,17 @@ function createResourcesUI() {
   // Controls Container (Sell Selector)
   const controls = document.createElement("div");
   controls.id = "res-controls";
+  controls.style.marginTop = "8px";
+  controls.style.display = "flex";
+  controls.style.justifyContent = "flex-end";
+  controls.style.alignItems = "center";
   header.appendChild(controls);
 
   const list = document.createElement("div");
   list.id = "res-list";
-  list.style.marginTop = "10px";
   list.style.display = "flex";
   list.style.flexDirection = "column";
-  list.style.gap = "5px";
+  list.style.gap = "8px";
   resContainer.appendChild(list);
 }
 
@@ -366,10 +399,20 @@ function refreshResourcesUI() {
   const totalPop = Math.floor(gameState.totalPopulation);
   const freePop = Math.floor(gameState.totalPopulation - gameState.employed);
 
+  // Stats: Improved Layout
   stats.innerHTML = `
-        <div>Credits: <span style="color:#FFD700">${gameState.credits?.toFixed(0) ?? "0"}</span></div>
-        <div>Pop: ${Math.floor(gameState.employed)} / ${totalPop} (Free: ${freePop})</div>
-        <div style="font-size:10px; color:#aaa; margin-top:5px;">Zone: ${gameState.activeZone.toUpperCase()}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <span style="color:#aaa; font-size:12px;">ZONE</span>
+            <span style="font-weight:bold; color:#fff; letter-spacing:1px">${gameState.activeZone.toUpperCase()}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <span style="color:#aaa; font-size:12px;">CREDITS</span>
+            <span style="color:#FFD700; font-weight:bold;">💰 ${gameState.credits?.toFixed(0) ?? "0"}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+             <span style="color:#aaa; font-size:12px;">POPULATION</span>
+             <span style="color:#90caf9;">👥 ${Math.floor(gameState.employed)} / ${totalPop} <span style="font-size:10px; color:#666">(${freePop} free)</span></span>
+        </div>
     `;
 
   const currentResources = gameState.resources[gameState.activeZone];
@@ -386,30 +429,35 @@ function refreshResourcesUI() {
     RESOURCES.TECH_POINTS,
   ];
 
-  // Sell Selector (Ensure it exists in controls)
+  // Sell Selector: Cleaner Style
   let sellAmountSel = document.getElementById(
     "sell-amount-selector",
   ) as HTMLSelectElement;
   if (!sellAmountSel) {
     const div = document.createElement("div");
-    div.style.marginTop = "5px";
-    div.style.fontSize = "10px";
-    div.innerHTML = `<span>Sell Pct: </span>`;
+    div.style.display = "flex";
+    div.style.alignItems = "center";
+    div.style.gap = "8px";
+
+    div.innerHTML = `<span style="font-size:11px; color:#888;">AMT:</span>`;
 
     sellAmountSel = document.createElement("select");
     sellAmountSel.id = "sell-amount-selector";
     Object.assign(sellAmountSel.style, {
-      fontSize: "10px",
-      padding: "1px",
-      backgroundColor: "#333",
-      color: "white",
+      fontSize: "11px",
+      padding: "2px 6px",
+      backgroundColor: "#222",
+      color: "#ddd",
       border: "1px solid #555",
+      borderRadius: "4px",
+      outline: "none",
+      cursor: "pointer",
     });
 
     [10, 50, 100].forEach((pct) => {
       const opt = document.createElement("option");
       opt.value = pct.toString();
-      opt.text = pct === 100 ? "All" : `${pct}%`;
+      opt.text = pct === 100 ? "MAX" : `${pct}%`;
       if (pct === 100) opt.selected = true;
       sellAmountSel.appendChild(opt);
     });
@@ -434,57 +482,107 @@ function refreshResourcesUI() {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        fontSize: "12px",
-        borderBottom: "1px solid #444",
-        paddingBottom: "2px",
+        padding: "6px 8px",
+        backgroundColor: "rgba(255,255,255,0.03)",
+        borderRadius: "6px",
+        marginBottom: "2px",
       });
 
-      const lbl = document.createElement("span");
-      lbl.id = `res-lbl-${res}`;
-      row.appendChild(lbl);
+      const leftCol = document.createElement("div");
+      leftCol.style.display = "flex";
+      leftCol.style.flexDirection = "column";
+
+      const name = document.createElement("span");
+      name.textContent = inputToLabel(res);
+      name.style.fontSize = "11px";
+      name.style.color = "#aaa";
+      name.style.fontWeight = "600";
+      leftCol.appendChild(name);
+
+      const valContainer = document.createElement("div");
+
+      const val = document.createElement("span");
+      val.id = `res-val-${res}`;
+      val.style.fontWeight = "bold";
+      val.style.fontSize = "13px";
+      val.style.color = "#eee";
+      valContainer.appendChild(val);
+
+      const rate = document.createElement("span");
+      rate.id = `res-rate-${res}`;
+      rate.style.marginLeft = "4px";
+      rate.style.fontSize = "10px";
+      valContainer.appendChild(rate);
+
+      leftCol.appendChild(valContainer);
+      row.appendChild(leftCol);
 
       // Add sell button only for sellable resources (not tech points)
       if (res !== RESOURCES.TECH_POINTS) {
         const btn = document.createElement("button");
-        btn.textContent = "SELL";
+        btn.textContent = "$";
         Object.assign(btn.style, {
-          fontSize: "10px",
-          padding: "2px 5px",
+          fontSize: "12px",
+          width: "28px",
+          height: "28px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           cursor: "pointer",
-          backgroundColor: "#4CAF50",
-          border: "none",
-          color: "white",
-          borderRadius: "2px",
+          backgroundColor: "transparent",
+          border: "1px solid #4CAF50",
+          color: "#4CAF50",
+          borderRadius: "50%",
+          marginLeft: "10px",
+          transition: "all 0.1s",
         });
+        btn.onmouseenter = () => {
+          btn.style.backgroundColor = "#4CAF50";
+          btn.style.color = "white";
+        };
+        btn.onmouseleave = () => {
+          btn.style.backgroundColor = "transparent";
+          btn.style.color = "#4CAF50";
+        };
         btn.onclick = () => {
           const sel = document.getElementById(
             "sell-amount-selector",
           ) as HTMLSelectElement;
           const pct = sel ? parseInt(sel.value) : 100;
           sellResource(res, pct);
+          btn.style.transform = "scale(0.9)";
+          setTimeout(() => (btn.style.transform = "scale(1)"), 100);
         };
         row.appendChild(btn);
+      } else {
+        const spacer = document.createElement("div");
+        spacer.style.width = "28px";
+        row.appendChild(spacer);
       }
 
       list.appendChild(row);
-    } else {
-      row.style.display = "flex";
     }
 
-    const lbl = document.getElementById(`res-lbl-${res}`);
-    if (lbl) {
-      let rateText = "";
+    // Ensure row is visible
+    row.style.display = "flex";
+
+    // Update Value
+    const valEl = document.getElementById(`res-val-${res}`);
+    if (valEl) valEl.textContent = amount.floor().toString();
+
+    // Update Rate
+    const rateEl = document.getElementById(`res-rate-${res}`);
+    if (rateEl) {
+      rateEl.innerHTML = "";
       const zoneRates = gameState.productionRates[gameState.activeZone];
       if (zoneRates) {
-        const rate = zoneRates.get(res) || 0;
-        // Filter out tiny values (sometimes floating point garbage)
-        if (Math.abs(rate) > 0.01) {
-          const color = rate > 0 ? "#8f8" : "#f88";
-          const sign = rate > 0 ? "+" : "";
-          rateText = ` <span style="color:${color}; font-size:10px;">(${sign}${rate.toFixed(1)}/s)</span>`;
+        const r = zoneRates.get(res) || 0;
+        if (Math.abs(r) > 0.01) {
+          const color = r > 0 ? "#8f8" : "#f88";
+          const sign = r > 0 ? "+" : "";
+          rateEl.innerHTML = `<span style="color:${color}">(${sign}${r.toFixed(1)}/s)</span>`;
         }
       }
-      lbl.innerHTML = `${inputToLabel(res)}: ${amount.toFixed(0)}${rateText}`;
     }
   });
 }
@@ -512,7 +610,7 @@ function createLogisticsUI() {
     padding: "10px",
     color: "#eee",
     borderRadius: "8px",
-    minWidth: "240px",
+    minWidth: "260px",
     fontSize: "12px",
     zIndex: "95",
     display: "none", // Hidden by default
@@ -523,39 +621,108 @@ function createLogisticsUI() {
             <div style="font-weight:bold;">Logistics Network</div>
             <button id="close-logistics" style="background:none; border:none; color:#f44336; font-weight:bold; cursor:pointer;">X</button>
         </div>
-        <div id="logistics-capacity" style="margin-bottom:10px;">Trucks: 0 / 0</div>
-        <div id="logistics-routes" style="max-height:200px; overflow-y:auto; margin-bottom:10px;"></div>
-        <div style="background:#333; padding:5px; border-radius:4px;">
-            <div style="margin-bottom:5px;">New Route:</div>
-            
-            <div style="margin-bottom:3px;">
-                <label style="font-size:10px; color:#aaa; display:block;">From:</label>
-                <div id="route-from-container" style="display:flex; gap:2px;"></div>
-            </div>
-            
-            <div style="margin-bottom:3px;">
-                <label style="font-size:10px; color:#aaa; display:block;">To:</label>
-                <div id="route-to-container" style="display:flex; gap:2px;"></div>
-            </div>
-            
-            <div style="margin-bottom:3px;">
-                <label style="font-size:10px; color:#aaa; display:block;">Resource:</label>
-                <select id="route-res" style="width:100%; box-sizing:border-box;"></select>
-            </div>
+        
+        <div style="display:flex; gap:5px; margin-bottom:10px;">
+             <button id="tab-transport" style="flex:1; padding:5px; background:#444; border:none; color:white; cursor:pointer; font-size:11px;">Transport</button>
+             <button id="tab-autosell" style="flex:1; padding:5px; background:#222; border:none; color:#888; cursor:pointer; font-size:11px;">Auto-Sell</button>
+        </div>
 
-             <div style="margin-bottom:5px;">
-                <label style="font-size:10px; color:#aaa; display:block;">Qty (0 = Infinite):</label>
-                <input id="route-amount" type="number" value="0" style="width:100%; box-sizing:border-box; font-size:11px;" placeholder="0" />
+        <div id="logistics-capacity" style="margin-bottom:10px;">Trucks: 0 / 0</div>
+
+        <!-- TRANSPORT PANEL -->
+        <div id="panel-transport">
+            <div id="logistics-routes" style="max-height:200px; overflow-y:auto; margin-bottom:10px;"></div>
+            <div style="background:#333; padding:5px; border-radius:4px;">
+                <div style="margin-bottom:5px;">New Route:</div>
+                
+                <div style="margin-bottom:3px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">From:</label>
+                    <div id="route-from-container" style="display:flex; gap:2px;"></div>
+                </div>
+                
+                <div style="margin-bottom:3px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">To:</label>
+                    <div id="route-to-container" style="display:flex; gap:2px;"></div>
+                </div>
+                
+                <div style="margin-bottom:3px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">Resource:</label>
+                    <select id="route-res" style="width:100%; box-sizing:border-box;"></select>
+                </div>
+
+                 <div style="margin-bottom:5px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">Qty (0 = Infinite):</label>
+                    <input id="route-amount" type="number" value="0" style="width:100%; box-sizing:border-box; font-size:11px;" placeholder="0" />
+                </div>
+                <button id="add-route-btn" style="width:100%; background:#2196F3; border:none; color:white; padding:4px; cursor:pointer;">Add Route</button>
             </div>
-            <button id="add-route-btn" style="width:100%; background:#2196F3; border:none; color:white; padding:4px; cursor:pointer;">Add Route</button>
+        </div>
+
+        <!-- AUTO-SELL PANEL -->
+        <div id="panel-autosell" style="display:none;">
+            <div id="autosell-routes" style="max-height:200px; overflow-y:auto; margin-bottom:10px;"></div>
+            <div style="background:#333; padding:5px; border-radius:4px;">
+                <div style="margin-bottom:5px;">New Auto-Sell Route:</div>
+                
+                <div style="margin-bottom:3px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">Zone:</label>
+                    <div id="sell-zone-container" style="display:flex; gap:2px;"></div>
+                </div>
+                
+                <div style="margin-bottom:3px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">Resource:</label>
+                    <select id="sell-res" style="width:100%; box-sizing:border-box;"></select>
+                </div>
+
+                 <div style="margin-bottom:5px;">
+                    <label style="font-size:10px; color:#aaa; display:block;">Keep Amount (0 = Sell All):</label>
+                    <input id="sell-amount" type="number" value="0" style="width:100%; box-sizing:border-box; font-size:11px;" placeholder="Min Stock" />
+                </div>
+                <button id="add-sell-btn" style="width:100%; background:#FF9800; border:none; color:white; padding:4px; cursor:pointer;">Add Sell Order</button>
+            </div>
         </div>
     `;
 
   document.body.appendChild(parent);
 
+  // Tab Logic
+  const tabTransport = parent.querySelector("#tab-transport") as HTMLElement;
+  const tabAutoSell = parent.querySelector("#tab-autosell") as HTMLElement;
+  const panelTransport = parent.querySelector(
+    "#panel-transport",
+  ) as HTMLElement;
+  const panelAutoSell = parent.querySelector("#panel-autosell") as HTMLElement;
+
+  const setTab = (mode: "transport" | "autosell") => {
+    if (mode === "transport") {
+      panelTransport.style.display = "block";
+      panelAutoSell.style.display = "none";
+      tabTransport.style.background = "#444";
+      tabTransport.style.color = "white";
+      tabAutoSell.style.background = "#222";
+      tabAutoSell.style.color = "#888";
+    } else {
+      // Check Tech
+      if (!gameState.unlockedTechs.has("auto_trade")) {
+        alert("Requires research: Auto-Trade");
+        return;
+      }
+      panelTransport.style.display = "none";
+      panelAutoSell.style.display = "block";
+      tabAutoSell.style.background = "#444";
+      tabAutoSell.style.color = "white";
+      tabTransport.style.background = "#222";
+      tabTransport.style.color = "#888";
+    }
+  };
+
+  tabTransport.onclick = () => setTab("transport");
+  tabAutoSell.onclick = () => setTab("autosell");
+
   // Default Selection
   let selectedFrom: ZoneId = ZONES.CITY;
   let selectedTo: ZoneId = ZONES.FOREST;
+  let selectedSellZone: ZoneId = ZONES.CITY;
 
   // Helper to render buttons
   const renderZoneButtons = (
@@ -585,6 +752,9 @@ function createLogisticsUI() {
     });
   };
 
+  const resSel = parent.querySelector("#route-res") as HTMLSelectElement;
+  const sellResSel = parent.querySelector("#sell-res") as HTMLSelectElement;
+
   const updateUI = () => {
     renderZoneButtons("route-from-container", selectedFrom, (z) => {
       selectedFrom = z;
@@ -594,6 +764,39 @@ function createLogisticsUI() {
       selectedTo = z;
       updateUI();
     });
+    renderZoneButtons("sell-zone-container", selectedSellZone, (z) => {
+      selectedSellZone = z;
+      updateUI();
+    });
+
+    const populateRes = (sel: HTMLSelectElement, zone: string) => {
+      sel.innerHTML = "";
+      if (gameState.resources[zone]) {
+        const available = gameState.resources[zone];
+        let hasAny = false;
+        available.forEach((amount, resName) => {
+          if (amount.gt(0)) {
+            hasAny = true;
+            // Using inputToLabel if available, else raw string
+            const label =
+              typeof inputToLabel === "function"
+                ? inputToLabel(resName)
+                : resName;
+            sel.add(new Option(`${label} (${amount.floor()})`, resName));
+          }
+        });
+        if (!hasAny) {
+          sel.add(new Option("No resources", ""));
+          sel.disabled = true;
+        } else {
+          sel.disabled = false;
+        }
+      }
+    };
+
+    // Populate Resources based on Source Zone
+    populateRes(resSel, selectedFrom);
+    populateRes(sellResSel, selectedSellZone);
   };
   updateUI();
 
@@ -604,22 +807,8 @@ function createLogisticsUI() {
     parent.style.display = "none";
   };
 
-  const resSel = parent.querySelector("#route-res") as HTMLSelectElement;
   const amtInput = parent.querySelector("#route-amount") as HTMLInputElement;
-
-  const RESOURCES_TO_LIST = [
-    RESOURCES.WOOD,
-    RESOURCES.STONE,
-    RESOURCES.WHEAT,
-    RESOURCES.PLANKS,
-    RESOURCES.BRICKS,
-    RESOURCES.FLOUR,
-    RESOURCES.BREAD,
-  ];
-
-  RESOURCES_TO_LIST.forEach((r) => {
-    resSel.add(new Option(r, r));
-  });
+  const sellAmtInput = parent.querySelector("#sell-amount") as HTMLInputElement;
 
   const btn = parent.querySelector("#add-route-btn") as HTMLButtonElement;
   btn.onclick = () => {
@@ -641,17 +830,40 @@ function createLogisticsUI() {
     });
     refreshLogisticsUI();
   };
+
+  const sellBtn = parent.querySelector("#add-sell-btn") as HTMLButtonElement;
+  sellBtn.onclick = () => {
+    const zone = selectedSellZone;
+    const res = sellResSel.value;
+    const keep = parseInt(sellAmtInput.value) || 0;
+
+    if (!gameState.autoSellRoutes) gameState.autoSellRoutes = [];
+    gameState.autoSellRoutes.push({
+      id: Date.now(),
+      zone: zone,
+      resource: res,
+      keepAmount: keep,
+      active: false,
+    });
+    refreshLogisticsUI();
+  };
 }
 
 function refreshLogisticsUI() {
   const depots = world
     .with("building")
     .where((e) => e.building.type === BUILDINGS.TRANSPORT_DEPOT);
-  const totalTrucks = depots.entities.length * 5;
+  const totalTrucks = depots.entities.length * 5; // Should match TransportSystem logic
+
   let activeRoutes = 0;
   gameState.routes.forEach((r) => {
     if (r.active) activeRoutes++;
   });
+  if (gameState.autoSellRoutes) {
+    gameState.autoSellRoutes.forEach((r) => {
+      if (r.active) activeRoutes++;
+    });
+  }
 
   const capEl = document.getElementById("logistics-capacity");
   if (capEl) {
@@ -663,20 +875,16 @@ function refreshLogisticsUI() {
     }
   }
 
+  // --- Transport Routes Listing ---
   const listEl = document.getElementById("logistics-routes");
   if (listEl) {
-    // Sync List to Routes
-    // Remove excess rows
-    while (listEl.children.length > gameState.routes.length) {
-      if (listEl.lastChild) listEl.removeChild(listEl.lastChild);
-    }
-
-    gameState.routes.forEach((r, idx) => {
-      let row = listEl.children[idx] as HTMLElement;
-
-      // Create if missing
-      if (!row) {
-        row = document.createElement("div");
+    listEl.innerHTML = ""; // Simpler to rebuild
+    if (gameState.routes.length === 0) {
+      listEl.innerHTML =
+        '<div style="color:#888; font-style:italic; padding:5px;">No active transport routes</div>';
+    } else {
+      gameState.routes.forEach((r, idx) => {
+        const row = document.createElement("div");
         Object.assign(row.style, {
           background: "rgba(255,255,255,0.05)",
           padding: "4px",
@@ -684,58 +892,57 @@ function refreshLogisticsUI() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          borderLeft: `3px solid ${r.active ? "#4CAF50" : "#EF5350"}`,
+        });
+
+        let progress = "∞";
+        if (r.targetAmount && r.targetAmount > 0) {
+          progress = `${r.movedAmount?.floor() ?? 0} / ${r.targetAmount}`;
+        }
+        const rate = r.throughput ? r.throughput.toFixed(1) : "0.0";
+
+        row.innerHTML = `
+                <div class="route-info">
+                   <div>${r.from} &rarr; ${r.to}</div>
+                   <div style="color:#aaa;">${r.resource} (~${rate}/s)</div>
+                   <div style="color:#888; font-size:10px;">Progress: ${progress}</div>
+                </div>
+                <button onclick="window.removeRoute(${idx})" style="background:none; border:none; color:#EF5350; cursor:pointer;">X</button>
+             `;
+        listEl.appendChild(row);
+      });
+    }
+  }
+
+  // --- Auto-Sell Routes Listing ---
+  const sellListEl = document.getElementById("autosell-routes");
+  if (sellListEl) {
+    sellListEl.innerHTML = "";
+    if (!gameState.autoSellRoutes || gameState.autoSellRoutes.length === 0) {
+      sellListEl.innerHTML =
+        '<div style="color:#888; font-style:italic; padding:5px;">No active sell orders</div>';
+    } else {
+      gameState.autoSellRoutes.forEach((r, idx) => {
+        const row = document.createElement("div");
+        Object.assign(row.style, {
+          background: "rgba(255,255,255,0.05)",
+          padding: "4px",
+          marginBottom: "4px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          borderLeft: `3px solid ${r.active ? "#4CAF50" : "#EF5350"}`,
         });
 
         row.innerHTML = `
-                    <div class="route-info"></div>
-                    <button class="route-del-btn" style="background:none; border:none; color:#EF5350; cursor:pointer;">X</button>
-                `;
-        listEl.appendChild(row);
-      }
-
-      // Update Style
-      row.style.borderLeft = `3px solid ${r.active ? "#4CAF50" : "#EF5350"}`;
-
-      // Update Info Content
-      let progress = "∞";
-      if (r.targetAmount && r.targetAmount > 0) {
-        progress = `${r.movedAmount?.floor() ?? 0} / ${r.targetAmount}`;
-      }
-
-      const rate = r.throughput ? r.throughput.toFixed(1) : "0.0";
-      const infoHTML = `
-                <div>${r.from} &rarr; ${r.to}</div>
-                <div style="color:#aaa;">${r.resource} (~${rate}/s)</div>
-                <div style="color:#888; font-size:10px;">Progress: ${progress}</div>
-            `;
-
-      const infoDiv = row.querySelector(".route-info");
-      if (infoDiv && infoDiv.innerHTML !== infoHTML)
-        infoDiv.innerHTML = infoHTML;
-
-      // Update Button Handler (Index changes!)
-      const btn = row.querySelector(".route-del-btn") as HTMLButtonElement;
-      if (btn) {
-        btn.onclick = () => (window as any).removeRoute(idx);
-      }
-    });
-
-    if (gameState.routes.length === 0 && listEl.children.length === 0) {
-      listEl.innerHTML =
-        '<div style="color:#888; font-style:italic; padding:5px;">No active routes</div>';
-    }
-    // If we have routes, remove the "No routes" placeholder if it exists (it would be child 0 technically if logic above confuses it, but children logic handles array)
-    // Oops, if children.length > 0 but it's the "No active routes" div...
-    // My sync logic assumes 1 div per route.
-    // If innerHTML was "No active routes", children.length is 1. routes.length is 1.
-    // We might try to treat that div as a row.
-    // Safer: If routes > 0 and first child has no class/structure, clear it.
-    if (
-      gameState.routes.length > 0 &&
-      listEl.firstElementChild &&
-      !listEl.firstElementChild.querySelector(".route-info")
-    ) {
-      listEl.innerHTML = "";
+                <div class="route-info">
+                   <div><span style="color:#FF9800">[SELL]</span> ${r.zone}</div>
+                   <div style="color:#aaa;">${r.resource} (Keep: ${r.keepAmount})</div>
+                </div>
+                <button onclick="window.removeSellRoute(${idx})" style="background:none; border:none; color:#EF5350; cursor:pointer;">X</button>
+              `;
+        sellListEl.appendChild(row);
+      });
     }
   }
 }
@@ -743,6 +950,13 @@ function refreshLogisticsUI() {
 (window as any).removeRoute = (idx: number) => {
   gameState.routes.splice(idx, 1);
   refreshLogisticsUI();
+};
+
+(window as any).removeSellRoute = (idx: number) => {
+  if (gameState.autoSellRoutes) {
+    gameState.autoSellRoutes.splice(idx, 1);
+    refreshLogisticsUI();
+  }
 };
 
 let inspectorEl: HTMLElement;
@@ -773,6 +987,7 @@ function createInspectorUI() {
         <div id="insp-upgrade" style="background:#222; padding:10px; border-radius:4px; margin-top:10px;">
             <div id="insp-up-title" style="font-size:12px; font-weight:bold; margin-bottom:5px;"></div>
             <div id="insp-up-costs" style="display:flex; flex-direction:column; gap:2px; margin-bottom:5px;"></div>
+            <div id="insp-auto-upgrade" style="margin-bottom:5px; padding-top:5px; border-top:1px solid #444; display:none;"></div>
             <button id="upgrade-btn" style="width:100%; padding:5px; cursor:pointer; background:#555; border:none; color:white; font-weight:bold; border-radius:2px;">
                 UPGRADE
             </button>
@@ -811,7 +1026,7 @@ function createInspectorUI() {
   };
 }
 
-function refreshInspectorUI() {
+export function refreshInspectorUI() {
   if (!inspectorEl) return;
 
   if (gameState.selectedBuilding || !gameState.selectedEntityId) {
@@ -839,32 +1054,193 @@ function refreshInspectorUI() {
   if (titleEl)
     titleEl.innerHTML = `${info.name} <span style="font-size:12px; color:#aaa;">Lv.${level}</span>`;
 
-  // 2. Update Stats (Rebuild innerHTML is fine for small section)
+  // 2. Update Stats (Current vs Next)
   const statsEl = document.getElementById("insp-stats");
+  const nextLevel = level + 1;
+  const costMult = Math.pow(1.5, level); // Cost multiplier for next level
+
   if (statsEl) {
-    let html = "";
-    if (entity.producer) {
-      const rate = entity.producer.rate.toFixed(2);
-      html += `<div style="margin-bottom:10px;">Production: <span style="color:#AED581">${rate}/s ${inputToLabel(entity.producer.resourceType)}</span></div>`;
+    let html = `<div style="font-size:11px; color:#888; margin-bottom:10px;">${info.description || ""}</div>`;
+
+    // Calculate Current & Next Stats
+    // Logic must match performUpgrade / System logic
+    const getStats = (lvl: number) => {
+      const mult = Math.pow(1.5, lvl - 1);
+      let prod = new Decimal(0);
+      let cons = new Decimal(0);
+
+      if (info.output) {
+        prod = new Decimal(info.output.rate).mul(mult);
+      }
+      if (info.input) {
+        // Consumption: Scales slower, e.g. 1.2x per level?
+        // Logic in performUpgrade needs to match this.
+        // Let's definition: Consumption scales by 1.25^level relative to base.
+        const consMult = Math.pow(1.25, lvl - 1);
+        cons = new Decimal(info.input.rate).mul(consMult);
+      }
+      return { prod, cons };
+    };
+
+    const cur = getStats(level);
+    const next = getStats(nextLevel);
+
+    // PRODUCTION
+    if (info.output) {
+      html += `<div style="margin-bottom:4px;">Production: 
+                 <span style="color:#AED581">${cur.prod.toFixed(2)}</span> 
+                 <span style="color:#aaa;">&rarr;</span> 
+                 <span style="color:#4CAF50; font-weight:bold;">${next.prod.toFixed(2)}</span> 
+                 /s ${inputToLabel(info.output.resource)}</div>`;
     }
+
+    // CONSUMPTION
+    if (info.input) {
+      html += `<div style="margin-bottom:4px;">Consumes: 
+                 <span style="color:#E57373">${cur.cons.toFixed(2)}</span> 
+                 <span style="color:#aaa;">&rarr;</span> 
+                 <span style="color:#F44336; font-weight:bold;">${next.cons.toFixed(2)}</span> 
+                 /s ${inputToLabel(info.input.resource)}</div>`;
+    }
+
+    // SPECIAL STATS
+    if (entity.building.type === BUILDINGS.TRANSPORT_DEPOT) {
+      const getFleet = (lvl: number) => 5 + (lvl - 1) * 2;
+      const getSpeed = (lvl: number) => 100 + (lvl - 1) * 20;
+
+      html += `<div style="margin-bottom:4px;">Fleet Size: <span style="color:#4FC3F7">${getFleet(level)}</span> &rarr; <b>${getFleet(nextLevel)}</b></div>`;
+      html += `<div style="margin-bottom:4px;">Speed: <span style="color:#4FC3F7">${getSpeed(level)}%</span> &rarr; <b>${getSpeed(nextLevel)}%</b></div>`;
+    }
+
+    if (entity.building.type === BUILDINGS.MARKETPLACE) {
+      const getOffers = (lvl: number) => 3 + Math.floor((lvl - 1) * 1); // e.g. +1 per level
+      html += `<div style="margin-bottom:4px;">Offers: <span style="color:#FFD54F">${getOffers(level)}</span> &rarr; <b>${getOffers(nextLevel)}</b></div>`;
+    }
+
     if (entity.inventory && entity.inventory.size > 0) {
-      html += `<div style="font-size:12px; margin-bottom:10px;">Stock: `;
+      html += `<hr style="border:0; border-top:1px solid #444; margin:5px 0;"><div style="font-size:12px; margin-bottom:10px;">Stock: `;
       entity.inventory.forEach((val, key) => {
         if (val.gt(0)) html += `${val.toFixed(0)} ${inputToLabel(key)}, `;
       });
       html += `</div>`;
     }
-    // Only update if changed prevents text selection loss?
-    // For now, replacing is visibly fine as long as we don't destroy the whole modal.
-    if (statsEl.innerHTML !== html) statsEl.innerHTML = html;
+    statsEl.innerHTML = html;
   }
 
   // 3. Upgrade Section
-  const nextLevel = level + 1;
-  const costMult = Math.pow(1.5, level);
-
   document.getElementById("insp-up-title")!.textContent =
-    `Upgrade to Lv.${nextLevel} (+50% Output)`;
+    `Upgrade to Lv.${nextLevel}`;
+
+  // 3b. Auto Upgrade Logic
+  const autoUpEl = document.getElementById("insp-auto-upgrade");
+  if (autoUpEl) {
+    if (gameState.unlockedTechs.has("auto_upgrade")) {
+      autoUpEl.style.display = "block";
+
+      const currentTarget = entity.building.autoUpgradeTarget || 0;
+      const isEnabled = (entity.building.autoUpgradeTarget !== undefined) && (entity.building.autoUpgradeTarget > level);
+
+      // Check if we need to initialize the DOM or if context changed
+      const lastId = autoUpEl.dataset.entityId;
+      const currentIdStr = entity.id !== undefined ? entity.id.toString() : "unknown";
+      const isNewEntity = lastId !== currentIdStr;
+      autoUpEl.dataset.entityId = currentIdStr;
+
+      let input = autoUpEl.querySelector("#auto-target-input") as HTMLInputElement;
+      let btn = autoUpEl.querySelector("#auto-toggle-btn") as HTMLButtonElement;
+      let statusDiv = autoUpEl.querySelector("#auto-status-msg") as HTMLDivElement;
+
+      // Initialize DOM if missing
+      if (!input || !btn || !statusDiv) {
+        autoUpEl.innerHTML = `
+                <div style="font-size:11px; margin-bottom:3px; color:#aaa;">Auto-Upgrade Target Level:</div>
+                <div style="display:flex; gap:5px;">
+                    <input type="number" id="auto-target-input" style="width:50px; font-size:11px; background:#333; color:white; border:1px solid #555; padding-left:4px;">
+                    <button id="auto-toggle-btn" style="flex:1; font-size:10px; cursor:pointer; border-radius:3px; border:none; padding:4px;">
+                        ENABLE AUTO-UPGRADE
+                    </button>
+                </div>
+                <div id="auto-status-msg" style="font-size:10px; color:#4CAF50; margin-top:2px; text-align:center; min-height:14px;"></div>
+              `;
+
+        input = autoUpEl.querySelector("#auto-target-input") as HTMLInputElement;
+        btn = autoUpEl.querySelector("#auto-toggle-btn") as HTMLButtonElement;
+        statusDiv = autoUpEl.querySelector("#auto-status-msg") as HTMLDivElement;
+
+        // Bind Events
+        btn.onclick = () => {
+          if (!entity.building) return;
+          const val = parseInt(input.value);
+
+          // Toggle Logic
+          // If currently enabled, we disable.
+          // If currently disabled, we enable (if input valid).
+          const currentlyEnabled = (entity.building.autoUpgradeTarget !== undefined);
+
+          if (currentlyEnabled) {
+            entity.building.autoUpgradeTarget = undefined;
+          } else {
+            if (!val || val <= entity.building.level) {
+              // Invalid target
+              return;
+            }
+            entity.building.autoUpgradeTarget = val;
+          }
+          refreshInspectorUI();
+        };
+
+        // Input Change Logic
+        input.onchange = () => {
+          if (entity.building && entity.building.autoUpgradeTarget !== undefined) {
+            const val = parseInt(input.value);
+            if (val > entity.building.level) {
+              entity.building.autoUpgradeTarget = val;
+              refreshInspectorUI();
+            }
+          }
+        };
+      }
+
+      // Update Values (Only if needed)
+
+      // 1. Input Value
+      // Reset input ONLY if a new entity is selected
+      if (isNewEntity) {
+        const displayTarget = isEnabled ? currentTarget : (level + 10);
+        input.value = displayTarget.toString();
+      } else {
+        // Same entity. 
+        // If input is NOT focused, sync it (if enabled)
+        if (document.activeElement !== input) {
+          if (isEnabled) {
+            input.value = currentTarget.toString();
+          }
+          // If disabled, keep user's typed value (don't overwrite)
+        }
+      }
+
+      // 2. Button State
+      if (isEnabled) {
+        btn.textContent = 'ENABLED (Click to Stop)';
+        btn.style.background = "#2E7D32";
+        btn.style.color = "white";
+      } else {
+        btn.textContent = 'ENABLE AUTO-UPGRADE';
+        btn.style.background = "#444";
+        btn.style.color = "#ccc";
+      }
+
+      // 3. Status Message
+      if (isEnabled) {
+        statusDiv.textContent = `Active until Lv.${currentTarget}`;
+      } else {
+        statusDiv.textContent = '';
+      }
+
+    } else {
+      autoUpEl.style.display = "none";
+    }
+  }
 
   // Calculate Costs
   const totalCosts: Record<string, number> = {};
@@ -878,8 +1254,21 @@ function refreshInspectorUI() {
     }
   }
 
+  // Cost: Workers
+  const requiredPop = info.workers || 0;
+  const freePop = Math.floor(gameState.totalPopulation - gameState.employed);
+
   let canAfford = true;
-  let costHtml = "";
+  let costHtml = `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px;">`;
+
+  // Check Population
+  if (requiredPop > 0) {
+    const havePop = freePop >= requiredPop;
+    if (!havePop) canAfford = false;
+    costHtml += `<div style="font-size:11px; color:${havePop ? "#ccc" : "#E57373"}">
+            People: ${requiredPop}
+        </div>`;
+  }
 
   for (const [res, amt] of Object.entries(totalCosts)) {
     const cost = amt as number;
@@ -891,10 +1280,11 @@ function refreshInspectorUI() {
       res === "money" ? gameState.credits.gte(cost) : have.gte(cost);
     if (!afford) canAfford = false;
 
-    costHtml += `<div style="display:flex; justify-content:space-between; width:100%; font-size:11px; color:${afford ? "#ccc" : "#E57373"}">
-            <span>${inputToLabel(res)}:</span> <span>${cost}</span>
+    costHtml += `<div style="font-size:11px; color:${afford ? "#ccc" : "#E57373"}">
+            ${inputToLabel(res)}: ${cost}
         </div>`;
   }
+  costHtml += `</div>`;
 
   const costEl = document.getElementById("insp-up-costs");
   if (costEl && costEl.innerHTML !== costHtml) costEl.innerHTML = costHtml;
@@ -913,15 +1303,13 @@ function refreshInspectorUI() {
 
   // 4. Pause Button
   const pauseBtn = document.getElementById("pause-btn") as HTMLButtonElement;
-  const pauseDiv = document.getElementById("insp-actions")!; // Ensure parent is visible?
+  const pauseDiv = document.getElementById("insp-actions")!;
 
-  // Only allow pausing if the building CONSUMES something (Processor)
-  // Base producers usually run forever.
   if (entity.producer && entity.producer.inputResource) {
     pauseDiv.style.display = "flex";
     const isPaused = !!entity.producer.isPaused;
     pauseBtn.textContent = isPaused ? "RESUME" : "PAUSE";
-    pauseBtn.style.background = isPaused ? "#2E7D32" : "#D32F2F"; // Green to Resume, Red to Pause
+    pauseBtn.style.background = isPaused ? "#2E7D32" : "#D32F2F";
 
     (pauseBtn as any).toggleAction = () => {
       if (entity.producer) {
@@ -953,15 +1341,37 @@ function performUpgrade(
   // 2. Upgrade
   entity.building.level += 1;
 
-  // 3. Effect
+  // 3. Effect (Update Components)
+  const newLevel = entity.building.level;
+
   if (entity.producer) {
-    // Base Rate * 1.5^(Level-1)
-    const baseRate = new Decimal(info.output.rate);
-    const newRate = baseRate.mul(Math.pow(1.5, entity.building.level - 1));
-    entity.producer.rate = newRate;
+    // Output: 1.5^(L-1)
+    if (info.output) {
+      const baseRate = new Decimal(info.output.rate);
+      const newRate = baseRate.mul(Math.pow(1.5, newLevel - 1));
+      entity.producer.rate = newRate;
+    }
+
+    // Input: 1.25^(L-1)
+    if (info.input) {
+      const baseIn = new Decimal(info.input.rate);
+      const newIn = baseIn.mul(Math.pow(1.25, newLevel - 1));
+      entity.producer.inputRate = newIn;
+    }
   }
 
-  console.log(`Upgraded to Level ${entity.building.level}`);
+  // 4. Update Visual (Level Badge)
+  if (entity.sprite && entity.sprite.children) {
+    const lbl = entity.sprite.children.find(
+      (c: any) => c.label === "LevelLabel",
+    );
+    if (lbl && (lbl as any).text !== undefined) {
+      (lbl as any).text = newLevel.toString();
+      (lbl as any).visible = newLevel > 1; // Only show if > 1
+    }
+  }
+
+  console.log(`Upgraded to Level ${newLevel}`);
   refreshInspectorUI();
 }
 
@@ -1010,7 +1420,8 @@ function createMarketUI() {
     display: "none",
     zIndex: "200", // Modal
     width: "400px",
-    maxHeight: "500px",
+    height: "auto",
+    maxHeight: "80vh",
     overflowY: "auto",
     borderRadius: "8px",
     boxShadow: "0 0 20px rgba(0,0,0,0.5)",

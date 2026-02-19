@@ -4,6 +4,8 @@ import { world } from "../core/ecs";
 import { BUILDINGS } from "../config/buildings";
 import Decimal from "decimal.js";
 
+import { getSellPrice } from "../config/prices";
+
 export function initTransportSystem() {
   gameLoop.addLogicSystem(TransportSystem);
   console.log("TransportSystem Initialized (Route Logic)");
@@ -41,7 +43,7 @@ function TransportSystem(dt: number) {
 
   let usedTrucks = 0;
 
-  // 2. Process Routes
+  // 2. Process Transport Routes
   for (const route of gameState.routes) {
     if (usedTrucks < totalTrucks) {
       route.active = true;
@@ -98,6 +100,45 @@ function TransportSystem(dt: number) {
     } else {
       route.active = false;
       route.throughput = 0;
+    }
+  }
+
+  // 3. Process Auto-Sell Routes
+  if (gameState.autoSellRoutes) {
+    for (const route of gameState.autoSellRoutes) {
+      if (usedTrucks < totalTrucks) {
+        route.active = true;
+        usedTrucks++;
+
+        // Logic: Check quantity -> sell excess
+        const inv = gameState.resources[route.zone];
+        if (!inv) continue;
+
+        const stored = inv.get(route.resource) || new Decimal(0);
+        const limit = new Decimal(route.keepAmount);
+
+        if (stored.gt(limit)) {
+          // Can sell
+          const excess = stored.minus(limit);
+          // Limit by truck speed (rate)
+          const ratePerSec = baseRate; // Same speed as transport? Sure.
+          let amountToSell = ratePerSec.mul(dt);
+
+          if (amountToSell.gt(excess)) amountToSell = excess;
+
+          if (amountToSell.gt(0)) {
+            gameState.consumeResource(route.zone, route.resource, amountToSell);
+            // Add credits
+            const price = getSellPrice(route.resource, gameState);
+            const creditGain = amountToSell.mul(price);
+            gameState.credits = gameState.credits.plus(creditGain);
+            gameState.lifetimeEarnings =
+              gameState.lifetimeEarnings.plus(creditGain);
+          }
+        }
+      } else {
+        route.active = false;
+      }
     }
   }
 

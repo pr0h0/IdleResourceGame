@@ -13,6 +13,25 @@ gameContainer.addChild(groundLayer);
 gameContainer.addChild(naturalLayer);
 gameContainer.addChild(objectLayer);
 
+let isBatchDestroying = false;
+
+// Optimization for Prestige/Reset
+export function batchDestroyVisuals() {
+  isBatchDestroying = true;
+  // Destroy children of each layer but keep the layers
+  groundLayer.removeChildren().forEach(c => c.destroy({ children: true }));
+  naturalLayer.removeChildren().forEach(c => c.destroy({ children: true }));
+  objectLayer.removeChildren().forEach(c => c.destroy({ children: true }));
+
+  // Reset flag after a short delay or immediately? 
+  // Immediately is risky if the entity loop happens right after.
+  // We should rely on the caller to finish entity removal.
+}
+
+export function finishBatchDestroy() {
+  isBatchDestroying = false;
+}
+
 // Zone Backgrounds (Outside Grid)
 const ZONE_BG_COLORS = {
   [ZONES.CITY]: 0x1a1a1a, // Dark Grey
@@ -57,8 +76,18 @@ export function initRenderSystem(app: Application) {
   });
 
   world.onEntityRemoved.subscribe((entity) => {
-    if (entity.sprite && entity.sprite.parent) {
-      entity.sprite.parent.removeChild(entity.sprite);
+    if (isBatchDestroying) return; // Skip individual cleanup during batch reset
+
+    if (entity.sprite) {
+      if (entity.sprite.parent) {
+        entity.sprite.parent.removeChild(entity.sprite);
+      }
+      // Ensure we destroy the PIXI object to free memory/GL buffers
+      // { children: true } destroys children recursively.
+      // { texture: false, baseTexture: false } is default, preventing shared texture destruction.
+      if (!entity.sprite.destroyed) {
+        entity.sprite.destroy({ children: true });
+      }
     }
   });
 

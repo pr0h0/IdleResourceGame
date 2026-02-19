@@ -1,4 +1,4 @@
-import { Application, Assets } from "pixi.js";
+import { Application, Assets, TextureStyle } from "pixi.js";
 import { gameLoop } from "./core/loop";
 import "./style.css";
 import { initRenderSystem, RenderSystem } from "./render/RenderSystem";
@@ -8,6 +8,7 @@ import { initResourceSystem } from "./systems/ResourceSystem";
 import { initTransportSystem } from "./systems/TransportSystem";
 import { initMarketSystem } from "./systems/MarketSystem";
 import { initInputSystem } from "./systems/InputSystem";
+import { initAutoUpgradeSystem } from "./systems/AutoUpgradeSystem";
 import { SaveSystem } from "./systems/SaveSystem";
 // import { initDebugUI } from "./utils/debug";
 import { createTile } from "./entities/createTile";
@@ -18,6 +19,7 @@ import { BUILDINGS } from "./config/buildings";
 
 import { createNaturalResource } from "./entities/createNaturalResource";
 import { NATURAL } from "./config/constants";
+import { RESOURCE_SPRITESHEETS } from "./config/animations";
 import { world, type Entity } from "./core/ecs";
 
 // Extend Window interface for HMR support
@@ -37,6 +39,9 @@ appDiv.innerHTML = "";
 // Initialize Pixi
 const app = new Application();
 
+// Set default scaling to nearest neighbor for pixel art
+TextureStyle.defaultOptions.scaleMode = "nearest";
+
 export const pixiApp = app; // Export for RenderSystem usage
 
 async function init() {
@@ -52,7 +57,11 @@ async function init() {
 
   // --- Preload Assets ---
   console.log("Loading assets...");
-  await Assets.load(Object.values(SPRITE_MAP));
+  const allAssets = [
+    ...Object.values(SPRITE_MAP),
+    ...Object.values(RESOURCE_SPRITESHEETS).map((s) => s.path),
+  ];
+  await Assets.load(allAssets);
   console.log("Assets loaded.");
 
   // --- Initialize Systems ---
@@ -63,6 +72,7 @@ async function init() {
   initTransportSystem();
   initMarketSystem();
   initInputSystem();
+  initAutoUpgradeSystem();
   // initDebugUI(); // Disabled for production feel
 
   // Add Loop Callbacks
@@ -171,9 +181,6 @@ async function init() {
     for (let x = 0; x < W; x++) {
       for (let y = 0; y < H; y++) {
         createTile(ZONES.FARM, x, y);
-        if (x === Math.floor(W / 2)) {
-          addNaturalSafely(ZONES.FARM, x, y, NATURAL.RIVER);
-        }
       }
     }
 

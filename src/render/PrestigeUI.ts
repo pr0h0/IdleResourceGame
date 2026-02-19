@@ -167,11 +167,13 @@ export function refreshPrestigeUI() {
   const amber = gameState.prestigeCurrency.floor();
   const pending = PrestigeSystem.calculatePendingPrestige();
   const lifetime = gameState.lifetimeEarnings;
+  const lifetimeAmber = gameState.lifetimeAmber || new Decimal(0);
 
   const statusDiv = document.getElementById("prestige-status");
   if (statusDiv) {
     statusDiv.innerHTML = `
             <div><strong>Current Amber:</strong> <span style="color:#FFB74D; font-size:1.5em">${amber}</span></div>
+            <div style="font-size: 0.9em; color:#aaa;">Total Amber Earned: ${lifetimeAmber.floor()} ( increases cost of next Amber )</div>
             <div>Lifetime Earnings: $${lifetime.floor()}</div>
             <div>Pending Amber (on Reset): <span style="color:#00E676">+${pending}</span></div>
         `;

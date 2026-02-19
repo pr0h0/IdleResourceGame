@@ -1,4 +1,11 @@
-import { Application, Container, Graphics, Text } from "pixi.js";
+import {
+  Application,
+  Container,
+  Graphics,
+  Text,
+  Texture,
+  Sprite,
+} from "pixi.js";
 import { gameState } from "../core/gameState";
 import {
   BUILDINGS,
@@ -6,6 +13,7 @@ import {
   type BuildingId,
   type BuildingDef,
 } from "../config/buildings";
+import { SPRITE_MAP, drawBuildingShape } from "../entities/createBuilding";
 import { ZONES, type ZoneId } from "../config/constants"; // Added ZONES
 import { world } from "../core/ecs";
 import {
@@ -23,10 +31,16 @@ import { togglePrestigeUI } from "./PrestigeUI";
 import { calculateZoneRates } from "../utils/stats"; // Import Stats Helper
 
 const TOOLBAR_HEIGHT = 190;
+const TOOLBAR_FONT = "Tahoma, Geneva, Verdana, sans-serif";
 const BUTTON_WIDTH = 110;
 const BUTTON_HEIGHT = 80;
 const BUTTON_GAP = 10;
 const PADDING = 10;
+
+// Cursors
+const CURSOR_POINTER = "url('/sprites/cursor_pointer.png'), pointer";
+const CURSOR_GRAB = "url('/sprites/cursor_grab.png'), grab";
+const CURSOR_GRABBING = "url('/sprites/cursor_grabbing.png'), grabbing";
 
 // Custom Button Type
 type ToolbarButton = Container & {
@@ -74,7 +88,7 @@ function onResize() {
   if (!toolbarContainer || !appRef) return;
 
   // Position at bottom
-  toolbarContainer.y = appRef.screen.height - TOOLBAR_HEIGHT;
+  toolbarContainer.y = Math.floor(appRef.screen.height - TOOLBAR_HEIGHT);
 
   // Draw Background
   let bg = toolbarContainer.getChildByLabel("ToolbarBG") as Graphics;
@@ -89,50 +103,43 @@ function onResize() {
   bg.fill({ color: 0x111111, alpha: 0.95 });
   bg.stroke({ width: 1, color: 0x555555 });
 
+  // Drag Hit Area (Row 2 Background)
+  let hitArea = toolbarContainer.getChildByLabel("Row2HitArea") as Graphics;
+  if (!hitArea) {
+    hitArea = new Graphics();
+    hitArea.label = "Row2HitArea";
+    hitArea.eventMode = "static";
+    hitArea.cursor = CURSOR_GRAB;
+    // Insert at index 1 (Above BG=0, Below Row2Container=1->2)
+    // Check if BG exists at 0? Yes.
+    toolbarContainer.addChildAt(hitArea, 1);
+  }
+  hitArea.clear();
+  hitArea.rect(0, 100, appRef.screen.width, 90);
+  hitArea.fill({ color: 0x000000, alpha: 0.001 }); // Invisible interactive
+
   // Input Handling for Background (Click blocking & Scrolling)
-  bg.eventMode = "static";
+  // We attach to toolbarContainer to capture events bubbled from buttons too
+  toolbarContainer.eventMode = "static";
 
-  // Clean listeners to avoid dupes on resize? onResize might be called multiple times.
-  bg.removeAllListeners();
+  // Clean listeners
+  toolbarContainer.removeAllListeners();
 
-  bg.on("pointerdown", (e) => {
-    e.stopPropagation();
-
-    // Start Scroll if in bottom area
+  toolbarContainer.on("pointerdown", (e) => {
+    // Only care if in bottom area
     const local = e.data.getLocalPosition(toolbarContainer);
     if (local.y > 100) {
-      isDragging = true;
+      // Just track start
+      isDragging = false; // Reset
       dragStartX = e.data.global.x;
-      scrollStartX = row2Container.x; // row2Container is offset by scroll
+      scrollStartX = row2Container.x;
+
+      toolbarContainer.cursor = CURSOR_GRABBING;
+
+      toolbarContainer.on("globalpointermove", onDragMove);
+      toolbarContainer.on("pointerup", onDragEnd);
+      toolbarContainer.on("pointerupoutside", onDragEnd);
     }
-  });
-
-  bg.on("globalpointermove", (e) => {
-    if (isDragging) {
-      const delta = e.data.global.x - dragStartX;
-      let newX = scrollStartX + delta;
-
-      // Clamp
-      // minScroll is usually negative (content width - screen width)
-      // maxScroll (start position) is PADDING or 0?
-      // Let's say default X is 0.
-      // row2Container X range: [screen_width - content_width - padding, 0]
-
-      // Actually, let's logic this out in rebuild.
-      // For now, update var.
-      row2Container.x = newX;
-      const minX = Math.min(0, appRef.screen.width - maxScroll - PADDING * 2);
-
-      if (row2Container.x > 0) row2Container.x = 0;
-      if (row2Container.x < minX) row2Container.x = minX;
-    }
-  });
-
-  bg.on("pointerup", () => {
-    isDragging = false;
-  });
-  bg.on("pointerupoutside", () => {
-    isDragging = false;
   });
 
   // Update Mask
@@ -142,6 +149,62 @@ function onResize() {
 
   // Rebuild content
   rebuildToolbar();
+}
+
+function onDragMove(e: any) {
+  const delta = e.data.global.x - dragStartX;
+
+  // Threshold to treat as drag
+  if (Math.abs(delta) > 5) {
+    isDragging = true;
+  }
+
+  if (isDragging) {
+    let newX = scrollStartX + delta;
+
+    const minX = Math.min(0, appRef.screen.width - maxScroll - PADDING * 2);
+    if (newX > 0) newX = 0;
+    if (newX < minX) newX = minX;
+
+    // Round to nearest integer to prevent sub-pixel rendering blur on text
+    row2Container.x = Math.round(newX);
+  }
+}
+
+function onDragEnd() {
+  toolbarContainer.off("globalpointermove", onDragMove);
+  toolbarContainer.off("pointerup", onDragEnd);
+  toolbarContainer.off("pointerupoutside", onDragEnd);
+
+  toolbarContainer.cursor = 'auto';
+
+  // We keep isDragging true for a frame so button tap handlers can see it
+  setTimeout(() => {
+    isDragging = false;
+  }, 50);
+}
+
+function createGripSeparator(x: number, y: number, parent: Container) {
+  const g = new Container();
+  g.x = x;
+  g.y = y;
+
+  // Hit Area for grip
+  const bg = new Graphics();
+  bg.rect(0, 0, 15, 80);
+  bg.fill({ color: 0x000000, alpha: 0.01 }); // Almost invisible hit area
+  g.addChild(bg);
+
+  // Dots
+  const dots = new Graphics();
+  const dotColor = 0x666666;
+  dots.circle(7.5, 25, 3);
+  dots.circle(7.5, 40, 3);
+  dots.circle(7.5, 55, 3);
+  dots.fill(dotColor);
+  g.addChild(dots);
+
+  parent.addChild(g);
 }
 
 let lastZone: string | null = null;
@@ -165,6 +228,9 @@ export function updatePixiToolbar() {
   }
 
   // Update States (Colors, Counts)
+  // Optimization: Only update if not dragging or interacting heavily?
+  // Or check if state changed? 
+  // For now, let's optimize updateButtonStates to NOT redraw BG if state hasn't changed.
   updateButtonStates();
 }
 
@@ -197,13 +263,17 @@ function rebuildToolbar() {
     if (!info) return;
 
     if (!info.validZones.includes(activeZone)) return;
-    if (info.unlockReq && !gameState.unlockedTechs.has(info.unlockReq)) return;
 
-    createBuildingButton(bId, info, r1x, r1y);
+    const isLocked = !!(
+      info.unlockReq && !gameState.unlockedTechs.has(info.unlockReq)
+    );
+
+    createBuildingButton(bId, info, r1x, r1y, toolbarContainer, isLocked);
     r1x += BUTTON_WIDTH + BUTTON_GAP;
   });
 
   // --- Row 2: Controls & System (Lower) ---
+  row2Container.y = 100;
 
   // Calculate Width
   let currentX = PADDING;
@@ -220,17 +290,13 @@ function rebuildToolbar() {
   });
 
   // Separator
-  let sep = new Graphics();
-  sep.rect(0, 0, 2, 70);
-  sep.fill(0x555555);
-  sep.x = currentX;
-  sep.y = 5;
-  row2Container.addChild(sep);
-  currentX += 15;
+  currentX += 5; // Left margin
+  createGripSeparator(currentX, 0, row2Container);
+  currentX += 15 + 15; // Grip width + Right margin
 
   // 2. Tools
   createToolButton(
-    "🖱️",
+    "cursor_default", // Was "🖱️"
     null,
     "Select",
     currentX,
@@ -242,7 +308,7 @@ function rebuildToolbar() {
   addParams(BUTTON_WIDTH);
 
   createToolButton(
-    "✋",
+    "tool_move", // Was "✋"
     "MOVE",
     "Move",
     currentX,
@@ -254,7 +320,7 @@ function rebuildToolbar() {
   addParams(BUTTON_WIDTH);
 
   createToolButton(
-    "🗑️",
+    "tool_destroy", // Was "🗑️"
     "DESTROY",
     "Destroy",
     currentX,
@@ -266,13 +332,9 @@ function rebuildToolbar() {
   addParams(BUTTON_WIDTH);
 
   // Separator
-  sep = new Graphics();
-  sep.rect(0, 0, 2, 70);
-  sep.fill(0x555555);
-  sep.x = currentX;
-  sep.y = 5;
-  row2Container.addChild(sep);
-  currentX += 15;
+  currentX += 5;
+  createGripSeparator(currentX, 0, row2Container);
+  currentX += 15 + 15;
 
   // 3. System Buttons
   // Use BUTTON_WIDTH / BUTTON_HEIGHT
@@ -383,18 +445,56 @@ function createToolButton(
   btn.addChild(bg);
 
   // Icon
-  const txt = new Text({
-    text: icon,
-    style: { fontSize: Math.min(width, height) * 0.4, fill: "white" },
-  });
-  txt.anchor.set(0.5);
-  txt.x = width / 2;
-  txt.y = height / 2;
-  btn.addChild(txt);
+  if (SPRITE_MAP[icon]) {
+    // It's a sprite key
+    try {
+      const tex = Texture.from(SPRITE_MAP[icon]);
+      const s = new Sprite(tex);
+      s.anchor.set(0.5);
+      s.x = width / 2;
+      s.y = height / 2;
+
+      // Scale to fit
+      const maxDim = Math.min(width, height) * 0.6;
+      // const scale = maxDim / Math.max(tex.width, tex.height); // Assuming texture loaded or size known
+      // If texture not loaded yet, width/height might be 1. logic holds roughly.
+      // Better: let's fix size
+      s.width = maxDim;
+      s.height = maxDim;
+      // s.scale.set(scale);
+
+      btn.addChild(s);
+    } catch (e) {
+      console.warn("Failed to load sprite for tool:", icon, e);
+      const txt = new Text({
+        text: "?",
+        style: { fontSize: Math.min(width, height) * 0.4, fill: "white" },
+      });
+      txt.anchor.set(0.5);
+      txt.x = width / 2;
+      txt.y = height / 2;
+      btn.addChild(txt);
+    }
+  } else {
+    // Text/Emoji
+    const txt = new Text({
+      text: icon,
+      resolution: 2,
+      style: {
+        fontSize: Math.min(width, height) * 0.4,
+        fill: "white",
+        fontFamily: TOOLBAR_FONT,
+      },
+    });
+    txt.anchor.set(0.5);
+    txt.x = width / 2;
+    txt.y = height / 2;
+    btn.addChild(txt);
+  }
 
   // Interaction
   btn.eventMode = "static";
-  btn.cursor = "pointer";
+  btn.cursor = CURSOR_POINTER;
 
   const toolId = id; // Closure capture
 
@@ -432,6 +532,7 @@ function createBuildingButton(
   x: number,
   y: number,
   parent: Container = toolbarContainer,
+  locked: boolean = false,
 ) {
   const btn = new Container() as ToolbarButton;
   btn.x = x;
@@ -444,11 +545,13 @@ function createBuildingButton(
 
   // Name
   const nameTxt = new Text({
-    text: info.name,
+    text: locked ? "Locked" : info.name,
+    resolution: 2,
     style: {
       fontSize: 12,
-      fill: "white",
+      fill: locked ? "#888888" : "white",
       fontWeight: "bold",
+      fontFamily: TOOLBAR_FONT,
       wordWrap: true,
       wordWrapWidth: BUTTON_WIDTH - 4,
       align: "center",
@@ -459,34 +562,107 @@ function createBuildingButton(
   nameTxt.y = 5;
   btn.addChild(nameTxt);
 
-  // Count
-  const countTxt = new Text({
-    text: "Cnt: 0",
-    style: { fontSize: 10, fill: "#4CAF50" },
-  });
-  countTxt.label = "CountTxt";
-  countTxt.anchor.set(0.5, 1);
-  countTxt.x = BUTTON_WIDTH / 2;
-  countTxt.y = BUTTON_HEIGHT - 5;
-  btn.addChild(countTxt);
+  // Icon
+  let iconContainer: Container | null = null;
+  if (SPRITE_MAP[bId]) {
+    try {
+      const tex = Texture.from(SPRITE_MAP[bId]);
+      const s = new Sprite(tex);
+      s.anchor.set(0.5);
+      s.x = BUTTON_WIDTH / 2;
+      s.y = BUTTON_HEIGHT / 2 + 5; // Center, slightly pushed down by title
+
+      // Scale to a reasonable size
+      const ICON_SIZE = 36;
+      s.width = ICON_SIZE;
+      s.height = ICON_SIZE;
+
+      btn.addChild(s);
+      iconContainer = s;
+    } catch (e) {
+      // Fallback to vector graphics shape for this building
+      const g = new Graphics();
+      drawBuildingShape(g, bId);
+      g.x = BUTTON_WIDTH / 2;
+      g.y = BUTTON_HEIGHT / 2 + 5;
+      // Scale down (graphics are typically drawn for 64x64 tiles)
+      g.scale.set(0.6);
+      btn.addChild(g);
+      iconContainer = g;
+    }
+  } else {
+    // No sprite available: generate vector graphics shape
+    const g = new Graphics();
+    drawBuildingShape(g, bId);
+    g.x = BUTTON_WIDTH / 2;
+    g.y = BUTTON_HEIGHT / 2 + 5;
+    // Scale down
+    g.scale.set(0.6);
+    btn.addChild(g);
+    iconContainer = g;
+  }
+
+  // Lock Visuals
+  if (locked && iconContainer) {
+    if (iconContainer instanceof Sprite) {
+      iconContainer.tint = 0x444444;
+    } else if (iconContainer instanceof Graphics) {
+      iconContainer.tint = 0x444444; // Graphics tint works in v8? Yes usually.
+      iconContainer.alpha = 0.5;
+    }
+    // Add Lock Icon Overlay?
+    const lock = new Text({ text: "🔒", style: { fontSize: 24 } });
+    lock.anchor.set(0.5);
+    lock.x = BUTTON_WIDTH / 2;
+    lock.y = BUTTON_HEIGHT / 2 + 5;
+    btn.addChild(lock);
+  }
+
+  // Count (Hide if locked)
+  if (!locked) {
+    const countTxt = new Text({
+      text: "Cnt: 0",
+      resolution: 2,
+      style: {
+        fontSize: 10,
+        fill: "#4CAF50",
+        fontFamily: TOOLBAR_FONT,
+      },
+    });
+    countTxt.label = "CountTxt";
+    countTxt.anchor.set(0.5, 1);
+    countTxt.x = BUTTON_WIDTH / 2;
+    countTxt.y = BUTTON_HEIGHT - 5;
+    btn.addChild(countTxt);
+  }
 
   // Interaction
   btn.eventMode = "static";
-  btn.cursor = "pointer";
 
-  btn.on("pointertap", () => {
-    // Check dragging status
-    if (!isDragging) {
-      gameState.selectedBuilding = bId as BuildingId;
-      updateButtonStates();
-    }
-  });
+  if (!locked) {
+    btn.cursor = CURSOR_POINTER;
+    btn.on("pointertap", () => {
+      // Check dragging status
+      if (!isDragging) {
+        gameState.selectedBuilding = bId as BuildingId;
+        updateButtonStates();
+      }
+    });
+  } else {
+    btn.cursor = "not-allowed";
+  }
 
   // Tooltip construction
   btn.on("pointerenter", () => {
     if (!isDragging) {
       const global = btn.getGlobalPosition();
-      const tooltipHTML = generateTooltip(info);
+      let tooltipHTML = generateTooltip(info);
+      if (locked && info.unlockReq) {
+        const techName = inputToLabel(info.unlockReq);
+        tooltipHTML =
+          `<div style="color:#ff6666"><strong>LOCKED</strong><br>Requires Tech: ${techName}</div>` +
+          tooltipHTML;
+      }
       showTooltip(tooltipHTML, global.x + BUTTON_WIDTH / 2, global.y);
     }
   });
@@ -534,8 +710,11 @@ function updateButtonStates() {
       isActive = current === bId;
 
       // Update Count
-      const count = world.with("building").where((e) => e.building.type === bId)
-        .entities.length;
+      // Optimized: Avoid dynamic query in loop
+      const count = world.with("building").entities.filter(
+        (e) => e.building.type === bId
+      ).length;
+      
       const cntTxt = child.getChildByLabel("CountTxt") as Text;
       if (cntTxt) cntTxt.text = `Cnt: ${count}`;
 
@@ -563,8 +742,13 @@ function updateButtonStates() {
     const h = isTool ? BUTTON_HEIGHT : BUTTON_HEIGHT;
     // We standardized everything to BUTTON_WIDTH x BUTTON_HEIGHT
 
-    bg.clear();
-    drawButtonBg(bg, w, h, isActive);
+    // Optimization: Store last active state to avoid clearing/redrawing
+    const lastActive = (child as any)._lastActive;
+    if (lastActive !== isActive) {
+      bg.clear();
+      drawButtonBg(bg, w, h, isActive);
+      (child as any)._lastActive = isActive;
+    }
   });
 }
 
@@ -641,11 +825,12 @@ function createZoneButton(
     // Text
     const t = new Text({
       text: zone.toUpperCase(), // FULL NAME
+      resolution: 2, // High DPI text
       style: {
         fill: 0xffffff,
         fontSize: 12, // Slightly smaller to fit "MOUNTAIN"
         fontWeight: "bold",
-        fontFamily: "Arial",
+        fontFamily: TOOLBAR_FONT,
       },
     });
     t.label = "TXT";
@@ -656,7 +841,7 @@ function createZoneButton(
 
     // Interaction
     btn.eventMode = "static";
-    btn.cursor = "pointer";
+    btn.cursor = CURSOR_POINTER;
     btn.on("pointertap", () => {
       if (!isDragging) {
         gameState.switchZone(zone);
@@ -768,10 +953,12 @@ function createSystemButton(
 
   const txt = new Text({
     text: locked ? "LOCKED" : label, // Or keep label but grayed? Keep label.
+    resolution: 2, // High resolution for sharper text
     style: {
       fontSize: 13,
       fill: locked ? "#666" : "white",
       fontWeight: "bold",
+      fontFamily: TOOLBAR_FONT,
     },
   });
   if (locked) txt.text = label; // Just keep label, color does the work
@@ -783,7 +970,7 @@ function createSystemButton(
 
   if (!locked) {
     btn.eventMode = "static";
-    btn.cursor = "pointer";
+    btn.cursor = CURSOR_POINTER;
     btn.on("pointertap", () => {
       if (!isDragging) {
         onClick();
